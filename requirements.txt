@@ -5,4 +5,5 @@ python-dotenv>=1.0.1
 pydantic>=2.8.0
 pydantic-settings>=2.6.1
 python-multipart>=0.0.9
+requests>=2.32.0
 

@@ -90,6 +90,57 @@
 					}
 				}
 			}
+		},
+		"/create_order": {
+			"post": {
+				"summary": "Create Yandex Pay order and return paymentUrl",
+				"tags": ["payments"],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"multipart/form-data": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"files": {
+										"type": "array",
+										"items": { "type": "string", "format": "binary" }
+									},
+									"email": { "type": "string", "format": "email" },
+									"price_rub": { "type": "number" },
+									"prompts": { "type": "string", "description": "JSON-строка (массив строк) с промптами" }
+								},
+								"required": ["email", "price_rub"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Возвращает идентификатор заказа и ссылку на оплату",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"orderId": { "type": "string" },
+										"paymentUrl": { "type": "string", "format": "uri" }
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/yandex-pay/webhook": {
+			"post": {
+				"summary": "Webhook от Yandex Pay (проверка подписи и обработка)",
+				"tags": ["payments"],
+				"responses": {
+					"200": { "description": "ok" }
+				}
+			}
 		}
 	},
 	"components": {
