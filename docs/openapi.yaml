@@ -1,0 +1,118 @@
+openapi: 3.1.0
+info:
+  title: fal-video-backend API
+  version: 1.0.0
+  description: |
+    Минимальный API для приёма изображения и проксирования запроса в fal.ai для генерации видео.
+servers:
+  - url: http://localhost:8000
+    description: Local server
+paths:
+  /generate_video:
+    post:
+      summary: Generate video from image via fal.ai
+      description: Принимает изображение и параметры, отправляет в fal.ai, возвращает JSON с результатом.
+      tags:
+        - generation
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: Входное изображение
+                prompt:
+                  type: string
+                  description: Текст подсказки для генерации
+                  default: Animate this image
+                sync_mode:
+                  type: boolean
+                  description: Синхронное ожидание завершения задачи
+                  default: true
+              required:
+                - image
+      responses:
+        "200":
+          description: Успех
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FalResult'
+              examples:
+                success:
+                  value:
+                    status: COMPLETED
+                    response_url: https://fal.ai/output/video/12345.mp4
+        "400":
+          description: Ошибка в запросе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                bad_request:
+                  value:
+                    error: Failed to process image
+                    details: Invalid input
+        "401":
+          description: Ошибка авторизации при обращении к fal.ai
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  value:
+                    error: Failed to process image
+                    details: Fal.ai request failed with 401 Unauthorized
+        "413":
+          description: Файл слишком большой (> 50 МБ)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                too_large:
+                  value:
+                    error: File too large (limit 50MB)
+        "500":
+          description: Внутренняя ошибка сервера / ошибка fal.ai
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                server_error:
+                  value:
+                    error: Failed to process image
+                    details: Unexpected error
+components:
+  schemas:
+    FalResult:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Статус обработки
+          examples: ["COMPLETED", "RUNNING", "FAILED"]
+        response_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Ссылка на сгенерированное видео (если есть)
+      additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+          nullable: true
+      required:
+        - error
