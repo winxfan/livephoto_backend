@@ -18,8 +18,12 @@ class Settings(BaseSettings):
 
 	# SMTP (Yandex)
 	smtp_host: str = Field("smtp.yandex.ru", alias="SMTP_HOST")
+	# поддержка альтернативного имени переменной SMTP_SERVER
+	smtp_server: str | None = Field(None, alias="SMTP_SERVER")
 	smtp_port: int = Field(465, alias="SMTP_PORT")
+	# поддержка альтернативного имени пользователя SMTP_USERNAME
 	smtp_email: str | None = Field(None, alias="SMTP_EMAIL")
+	smtp_username: str | None = Field(None, alias="SMTP_USERNAME")
 	smtp_password: str | None = Field(None, alias="SMTP_PASSWORD")
 
 	# S3 (Yandex Cloud Object Storage)
@@ -31,6 +35,15 @@ class Settings(BaseSettings):
 	s3_presign_ttl_seconds: int = Field(259200, alias="S3_PRESIGN_TTL_SECONDS")
 	uploads_prefix: str = Field("uploads/", alias="UPLOADS_PREFIX")
 	videos_prefix: str = Field("videos/", alias="VIDEOS_PREFIX")
+
+	# Frontend
+	frontend_return_url_base: str = Field("http://localhost:3000", alias="FRONTEND_RETURN_URL_BASE")
+
+	# YooKassa
+	yookassa_shop_id: str | None = Field(None, alias="YOOKASSA_SHOP_ID")
+	yookassa_api_key: str | None = Field(None, alias="YOOKASSA_API_KEY")
+	yookassa_api_base: str = Field("https://api.yookassa.ru", alias="YOOKASSA_API_BASE")
+	yookassa_webhook_secret: str | None = Field(None, alias="YOOKASSA_WEBHOOK_SECRET")
 
 	model_config = SettingsConfigDict(
 		env_file=".env",

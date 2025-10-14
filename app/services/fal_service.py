@@ -28,3 +28,17 @@ def generate_multiple(image_paths: List[str], prompts: List[str] | None = None, 
 		prompt = prompts[idx] if prompts and idx < len(prompts) else "Animate this image"
 		results.append(upload_file_and_generate(path, prompt=prompt, sync_mode=sync_mode))
 	return results
+
+
+def generate_from_url(image_url: str, prompt: str, sync_mode: bool = True) -> Dict[str, Any]:
+	"""Генерация по внешнему URL изображения (presigned S3)."""
+	result = fal_client.subscribe(
+		settings.fal_endpoint,
+		arguments={
+			"prompt": prompt,
+			"image_url": image_url,
+			"sync_mode": sync_mode,
+		},
+		with_logs=True,
+	)
+	return result

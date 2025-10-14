@@ -12,3 +12,4 @@ class FalResult(BaseModel):
 	# Using extra allowed would be ideal in Pydantic v2 via model_config
 	class Config:
 		extra = "allow"
+

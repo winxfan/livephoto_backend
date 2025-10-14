@@ -40,3 +40,14 @@ def presigned_get_url(bucket: str, key: str, expires: Optional[int] = None) -> s
 	)
 
 
+def parse_s3_url(url: str) -> tuple[str, str]:
+	"""Парсит строки вида s3://bucket/key -> (bucket, key)."""
+	if not url.startswith("s3://"):
+		raise ValueError("not an s3 url")
+	rem = url[5:]
+	bucket, _, key = rem.partition("/")
+	if not bucket or not key:
+		raise ValueError("invalid s3 url")
+	return bucket, key
+
+

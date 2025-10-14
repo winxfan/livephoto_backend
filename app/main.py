@@ -2,7 +2,7 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 from app.utils.file_utils import save_upload_to_temp, save_multiple_uploads_to_temp, JsonOrderStore
 from app.services.fal_service import upload_file_and_generate, generate_multiple
-from app.services.yandex_pay_service import create_payment_link
+from app.services.yookassa_service import create_payment as yk_create_payment
 from typing import List, Optional
 import uuid
 import hmac, hashlib, base64
@@ -10,6 +10,8 @@ from fastapi import Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.services.email_service import send_email_with_links
+from app.services.email_service import send_payment_receipt
+from app.services.fal_service import generate_from_url
 
 # new imports
 from app.utils.s3_utils import upload_bytes, s3_key_for_upload
@@ -85,7 +87,7 @@ async def create_order(
 		"email": email,
 		"price_rub": price_rub,
 		"payment": {
-			"provider": "tinkoff",
+			"provider": "yookassa",
 			"status": "gateway_pending",
 		},
 		"generation": {
@@ -96,11 +98,31 @@ async def create_order(
 			],
 		},
 	}
+	# создаем платёж в YooKassa и сохраняем payment_id + paymentUrl
+	try:
+		payment = yk_create_payment(
+			order_id=request_id,
+			amount_rub=price_rub,
+			description=f"Video generation {len(images_meta)} item(s)",
+			return_url=f"{settings.frontend_return_url_base}/payment/success?orderId={request_id}",
+			email=email,
+			anon_user_id=anonUserId,
+		)
+		order_record["payment"].update({
+			"payment_id": payment["payment_id"],
+			"payment_url": payment["payment_url"],
+		})
+	except Exception as e:
+		# если не удалось создать платёж, остаемся в gateway_pending без URL
+		order_record["payment"].update({"error": str(e)})
+
 	orders.save(order_record)
 	return {
 		"orderId": request_id,
-		"paymentStatus": "gateway_pending",
-		"generationStatus": "waiting_payment",
+		"paymentStatus": order_record["payment"]["status"],
+		"generationStatus": order_record["generation"]["status"],
+		"paymentUrl": order_record["payment"].get("payment_url"),
+		"paymentError": order_record["payment"].get("error"),
 	}
 
 
@@ -144,6 +166,73 @@ async def yandex_pay_webhook(request: Request):
 				orders.update_status(order_id, "COMPLETED")
 		else:
 			orders.update_status(order_id, f"STATUS_{status}")
+	return {"ok": True}
+
+
+# YooKassa webhook: подтверждение оплаты -> генерация -> письма
+
+@app.post("/yookassa/webhook")
+async def yookassa_webhook(payload: dict, request: Request):
+	# Опциональная проверка подписи, если настроен секрет
+	try:
+		secret = settings.yookassa_webhook_secret
+		if secret:
+			raw = await request.body()
+			import hmac, hashlib
+			signature = request.headers.get("Webhook-Signature") or request.headers.get("X-Webhook-Signature")
+			if not signature:
+				return {"ok": False}
+			expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+			if not hmac.compare_digest(expected, signature):
+				return {"ok": False}
+	except Exception:
+		pass
+	# YooKassa шлет объект payment в поле object
+	obj = payload.get("object") or {}
+	status = obj.get("status")
+	payment_id = obj.get("id")
+	amount = obj.get("amount", {}).get("value")
+	metadata = obj.get("metadata") or {}
+	order_id = metadata.get("order_id")
+	if not order_id:
+		return {"ok": True}
+
+	order = orders.load(order_id) or {}
+	if status == "succeeded":
+		# фиксация оплаты
+		order.setdefault("payment", {})
+		order["payment"].update({"status": "paid", "payment_id": payment_id})
+		orders.save(order)
+		# отправка квитанции
+		try:
+			if order.get("email"):
+				send_payment_receipt(order["email"], float(amount or 0), order_id, payment_id)
+		except Exception:
+			pass
+		# генерация по каждому инпуту: используем presigned URL к S3 как image_url
+		items = (order.get("generation") or {}).get("items") or []
+		links: List[str] = []
+		from app.utils.s3_utils import parse_s3_url, presigned_get_url
+		for idx, it in enumerate(items):
+			try:
+				bucket, key = parse_s3_url(it.get("input_s3_url", ""))
+				img_url = presigned_get_url(bucket, key)
+				# Генерируем по URL, чтобы не читать локальные файлы
+				res = generate_from_url(img_url, prompt=it.get("prompt") or "Animate this image", sync_mode=True)
+				url = res.get("response_url") or res.get("url") or res.get("video_url")
+				if url:
+					links.append(url)
+			except Exception:
+				continue
+		# отправка ссылок на видео
+		try:
+			if order.get("email") and links:
+				send_email_with_links(order["email"], links)
+		except Exception:
+			pass
+		# финальный статус
+		order.setdefault("generation", {}).update({"status": "completed"})
+		orders.save(order)
 	return {"ok": True}
 
 
