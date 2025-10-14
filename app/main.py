@@ -7,10 +7,25 @@ from typing import List, Optional
 import uuid
 import hmac, hashlib, base64
 from fastapi import Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.services.email_service import send_email_with_links
 
+# new imports
+from app.utils.s3_utils import upload_bytes, s3_key_for_upload
+import os
+import json
+
 app = FastAPI()
+
+# CORS
+app.add_middleware(
+	CORSMiddleware,
+	allow_origins=["http://localhost:3000"],
+	allow_credentials=False,
+	allow_methods=["*"],
+	allow_headers=["*"],
+)
 
 orders = JsonOrderStore()
 
@@ -40,24 +55,53 @@ async def create_order(
 	price_rub: float = Form(...),
 	files: List[UploadFile] | None = None,
 	prompts: Optional[str] = Form(None),  # JSON-строка с массивом промптов или один общий
+	anonUserId: str = Form(...),
 ):
-	# сохраняем входные файлы временно (в реале — лучше сразу в S3)
-	paths = save_multiple_uploads_to_temp(files or [])
-	order_id = f"order-{uuid.uuid4().hex[:8]}"
-	items_count = len(paths)
-	# записываем заказ в файловое хранилище
-	orders.save({
-		"order_id": order_id,
+	# 1) сохраняем входные файлы в S3
+	request_id = f"order-{uuid.uuid4().hex[:8]}"
+	images_meta = []
+	files = files or []
+	prompts_list: Optional[List[str]] = None
+	if prompts:
+		try:
+			prompts_list = json.loads(prompts)
+		except Exception:
+			prompts_list = None
+	for idx, upload in enumerate(files):
+		# читаем весь файл в память; для больших файлов лучше стримить по частям
+		content = await upload.read()
+		filename = upload.filename or f"file_{idx}"
+		key = s3_key_for_upload(anonUserId, request_id, filename)
+		upload_bytes(settings.s3_bucket_name or "", key, content, content_type=upload.content_type)
+		s3_url = f"s3://{settings.s3_bucket_name}/{key}"
+		prompt_val = (prompts_list[idx] if prompts_list and idx < len(prompts_list) else "Animate this image")
+		images_meta.append({"s3_url": s3_url, "prompt": prompt_val})
+
+	# 2) записываем заказ в JSON-хранилище
+	order_record = {
+		"order_id": request_id,
+		"request_id": request_id,
+		"anonUserId": anonUserId,
 		"email": email,
-		"status": "CREATED",
-		"files": paths,
-		"prompts": prompts,
 		"price_rub": price_rub,
-	})
-	# создаем платежную ссылку
-	payment = create_payment_link(order_id, items_count=items_count or 1, total_amount_rub=price_rub)
-	orders.update_status(order_id, "PAYMENT_CREATED")
-	return {"orderId": order_id, "paymentUrl": payment["paymentUrl"]}
+		"payment": {
+			"provider": "tinkoff",
+			"status": "gateway_pending",
+		},
+		"generation": {
+			"status": "waiting_payment",
+			"items": [
+				{"input_s3_url": im["s3_url"], "prompt": im["prompt"], "status": "pending"}
+				for im in images_meta
+			],
+		},
+	}
+	orders.save(order_record)
+	return {
+		"orderId": request_id,
+		"paymentStatus": "gateway_pending",
+		"generationStatus": "waiting_payment",
+	}
 
 
 def _verify_webhook_signature(raw_body: bytes, header_signature: str | None) -> bool:
@@ -85,21 +129,35 @@ async def yandex_pay_webhook(request: Request):
 			if order:
 				prompts = None
 				try:
-					import json
-					prompts = json.loads(order.get("prompts") or "null")
+					import json as _json
+					prompts = _json.loads(order.get("prompts") or "null")
 				except Exception:
 					prompts = None
 				results = generate_multiple(order.get("files") or [], prompts=prompts or None, sync_mode=True)
-				# извлекаем URL'ы (зависит от модели fal.ai; оставим как pass-through)
 				links: List[str] = []
 				for r in results:
 					url = r.get("response_url") or r.get("url") or r.get("video_url")
 					if url:
 						links.append(url)
-				# отправляем письмо
 				if order.get("email") and links:
 					send_email_with_links(order["email"], links)
 				orders.update_status(order_id, "COMPLETED")
 		else:
 			orders.update_status(order_id, f"STATUS_{status}")
 	return {"ok": True}
+
+
+# статус запроса
+@app.get("/request/{request_id}")
+async def get_request_status(request_id: str, anonUserId: str):
+	rec = orders.load(request_id)
+	if not rec:
+		raise HTTPException(status_code=404, detail="request not found")
+	if rec.get("anonUserId") != anonUserId:
+		raise HTTPException(status_code=403, detail="forbidden")
+	return {
+		"orderId": rec.get("request_id") or rec.get("order_id"),
+		"payment": rec.get("payment"),
+		"generation": rec.get("generation"),
+		"email": rec.get("email"),
+	}

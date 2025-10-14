@@ -1,0 +1,42 @@
+import os
+import mimetypes
+from typing import BinaryIO, Optional
+import boto3
+
+from app.config import settings
+
+
+def _s3_client():
+	return boto3.client(
+		"s3",
+		endpoint_url=settings.s3_endpoint_url,
+		aws_access_key_id=settings.s3_access_key_id,
+		aws_secret_access_key=settings.s3_secret_access_key,
+		region_name=settings.s3_region_name,
+	)
+
+
+def s3_key_for_upload(anon_user_id: str, request_id: str, filename: str) -> str:
+	return f"{settings.uploads_prefix}{anon_user_id}/{request_id}/{filename}"
+
+
+def s3_key_for_video(anon_user_id: str, request_id: str, index: int, ext: str = ".mp4") -> str:
+	return f"{settings.videos_prefix}{anon_user_id}/{request_id}/{index}{ext}"
+
+
+def upload_bytes(bucket: str, key: str, data: bytes, content_type: Optional[str] = None) -> None:
+	client = _s3_client()
+	ct = content_type or mimetypes.guess_type(key)[0] or "application/octet-stream"
+	client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=ct)
+
+
+def presigned_get_url(bucket: str, key: str, expires: Optional[int] = None) -> str:
+	client = _s3_client()
+	exp = expires or settings.s3_presign_ttl_seconds
+	return client.generate_presigned_url(
+		"get_object",
+		Params={"Bucket": bucket, "Key": key},
+		ExpiresIn=exp,
+	)
+
+

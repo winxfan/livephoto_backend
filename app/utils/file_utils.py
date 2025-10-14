@@ -4,6 +4,7 @@ from fastapi import UploadFile, HTTPException
 from typing import List
 import json
 from datetime import datetime
+import glob
 
 MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
 
@@ -56,29 +57,71 @@ def save_multiple_uploads_to_temp(uploads: List[UploadFile]) -> List[str]:
 
 
 class JsonOrderStore:
-	"""Простое файловое хранилище заказов для демо/локального режима."""
+	"""Файловое хранилище: одна дата = один JSON-файл в текущей директории.
 
-	def __init__(self, base_dir: str = "/tmp/yapay_orders") -> None:
-		self.base_dir = base_dir
+	Структура файла: массив объектов-заявок за день.
+	Имена файлов: YYYY-MM-DD.json
+	"""
+
+	def __init__(self, base_dir: str = "logs") -> None:
+		self.base_dir = base_dir  # относительный путь (текущая директория по умолчанию)
 		os.makedirs(self.base_dir, exist_ok=True)
 
-	def _path(self, order_id: str) -> str:
-		return os.path.join(self.base_dir, f"{order_id}.json")
+	def _date_file(self, date_str: str) -> str:
+		return os.path.join(self.base_dir, f"{date_str}.json")
+
+	def _list_day_files(self) -> List[str]:
+		pattern = os.path.join(self.base_dir, "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].json")
+		return sorted(glob.glob(pattern))
+
+	def _read_day(self, path: str) -> List[dict]:
+		if not os.path.exists(path):
+			return []
+		with open(path, "r", encoding="utf-8") as f:
+			try:
+				data = json.load(f)
+				return data if isinstance(data, list) else []
+			except Exception:
+				return []
+
+	def _write_day(self, path: str, items: List[dict]) -> None:
+		with open(path, "w", encoding="utf-8") as f:
+			json.dump(items, f, ensure_ascii=False, indent=2)
 
 	def save(self, order: dict) -> None:
-		order.setdefault("created_at", datetime.utcnow().isoformat())
-		with open(self._path(order["order_id"]), "w", encoding="utf-8") as f:
-			json.dump(order, f, ensure_ascii=False, indent=2)
+		# Определяем дату по created_at или текущую (UTC)
+		created_at = order.get("created_at") or datetime.utcnow().isoformat()
+		order["created_at"] = created_at
+		date_str = created_at[:10]
+		path = self._date_file(date_str)
+		day_items = self._read_day(path)
+		# Удаляем старую запись с тем же order_id, если есть, и добавляем актуальную
+		order_id = order.get("order_id") or order.get("request_id")
+		day_items = [it for it in day_items if (it.get("order_id") or it.get("request_id")) != order_id]
+		day_items.append(order)
+		self._write_day(path, day_items)
 
 	def load(self, order_id: str) -> dict | None:
-		path = self._path(order_id)
-		if not os.path.exists(path):
-			return None
-		with open(path, "r", encoding="utf-8") as f:
-			return json.load(f)
+		# Поиск по всем дневным файлам (от новых к старым)
+		files = self._list_day_files()[::-1]
+		for path in files:
+			for it in self._read_day(path):
+				if (it.get("order_id") or it.get("request_id")) == order_id:
+					return it
+		return None
 
 	def update_status(self, order_id: str, status: str) -> None:
-		order = self.load(order_id) or {"order_id": order_id}
-		order["status"] = status
-		self.save(order)
+		files = self._list_day_files()[::-1]
+		for path in files:
+			items = self._read_day(path)
+			updated = False
+			for it in items:
+				if (it.get("order_id") or it.get("request_id")) == order_id:
+					it["status"] = status
+					it["updated_at"] = datetime.utcnow().isoformat()
+					updated = True
+					break
+			if updated:
+				self._write_day(path, items)
+				return
 

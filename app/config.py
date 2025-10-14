@@ -22,7 +22,22 @@ class Settings(BaseSettings):
 	smtp_email: str | None = Field(None, alias="SMTP_EMAIL")
 	smtp_password: str | None = Field(None, alias="SMTP_PASSWORD")
 
-	model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", populate_by_name=True)
+	# S3 (Yandex Cloud Object Storage)
+	s3_endpoint_url: str | None = Field(None, alias="S3_ENDPOINT_URL")
+	s3_access_key_id: str | None = Field(None, alias="S3_ACCESS_KEY_ID")
+	s3_secret_access_key: str | None = Field(None, alias="S3_SECRET_ACCESS_KEY")
+	s3_bucket_name: str | None = Field(None, alias="S3_BUCKET_NAME")
+	s3_region_name: str | None = Field(None, alias="S3_REGION_NAME")
+	s3_presign_ttl_seconds: int = Field(259200, alias="S3_PRESIGN_TTL_SECONDS")
+	uploads_prefix: str = Field("uploads/", alias="UPLOADS_PREFIX")
+	videos_prefix: str = Field("videos/", alias="VIDEOS_PREFIX")
+
+	model_config = SettingsConfigDict(
+		env_file=".env",
+		env_file_encoding="utf-8",
+		populate_by_name=True,
+		extra="ignore",
+	)
 
 settings = Settings()
 
