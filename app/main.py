@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.services.email_service import send_email_with_links
 from app.services.email_service import send_payment_receipt
+from app.services.email_service import send_email_with_attachments
 from app.services.fal_service import generate_from_url
 
 # new imports
@@ -221,7 +222,19 @@ async def yookassa_webhook(payload: dict, request: Request):
 				res = generate_from_url(img_url, prompt=it.get("prompt") or "Animate this image", sync_mode=True)
 				url = res.get("response_url") or res.get("url") or res.get("video_url")
 				if url:
-					links.append(url)
+					# Заливаем видео в S3/videos и формируем presigned ссылку
+					try:
+						import requests as _rq
+						video_resp = _rq.get(url, timeout=120)
+						video_resp.raise_for_status()
+						video_bytes = video_resp.content
+						from app.utils.s3_utils import s3_key_for_video, upload_bytes, presigned_get_url as _pres
+						video_key = s3_key_for_video(order.get("anonUserId") or "user", order_id, idx, ".mp4")
+						upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
+						links.append(_pres(settings.s3_bucket_name or "", video_key))
+					except Exception:
+						# fallback: оставить оригинальную ссылку fal.ai
+						links.append(url)
 			except Exception:
 				continue
 		# отправка ссылок на видео

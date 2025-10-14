@@ -1,7 +1,7 @@
 from email.message import EmailMessage
 import ssl
 import smtplib
-from typing import List
+from typing import List, Tuple, Optional
 
 from app.config import settings
 
@@ -38,6 +38,27 @@ def send_payment_receipt(recipient_email: str, amount_rub: float, order_id: str,
 		f"Платеж: {payment_id}\n"
 	)
 	msg.set_content(body)
+	with _smtp_conn() as smtp:
+		user = settings.smtp_email or settings.smtp_username
+		if user and settings.smtp_password:
+			smtp.login(user, settings.smtp_password)
+		smtp.send_message(msg)
+
+
+def send_email_with_attachments(
+	recipient_email: str,
+	subject: str,
+	body_text: str,
+	attachments: List[Tuple[str, bytes, Optional[str]]],  # (filename, content, content_type)
+) -> None:
+	msg = EmailMessage()
+	msg["Subject"] = subject
+	msg["From"] = settings.smtp_email or settings.smtp_username
+	msg["To"] = recipient_email
+	msg.set_content(body_text)
+	for filename, content, content_type in attachments:
+		maintype, subtype = (content_type or "application/octet-stream").split("/", 1)
+		msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
 	with _smtp_conn() as smtp:
 		user = settings.smtp_email or settings.smtp_username
 		if user and settings.smtp_password:
