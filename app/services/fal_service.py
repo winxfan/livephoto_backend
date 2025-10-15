@@ -4,6 +4,7 @@ import fal_client
 import requests
 
 from app.config import settings
+from app.utils.s3_utils import parse_s3_url, get_file_url_with_expiry
 
 # Ensure API key is set for fal_client
 os.environ.setdefault("FAL_KEY", settings.fal_key)
@@ -33,6 +34,13 @@ def generate_multiple(image_paths: List[str], prompts: List[str] | None = None, 
 
 def generate_from_url(image_url: str, prompt: str, sync_mode: bool = True) -> Dict[str, Any]:
 	"""Генерация по внешнему URL изображения (presigned S3)."""
+	# Если передан s3:// — преобразуем в публичный presigned URL
+	try:
+		if image_url.startswith("s3://"):
+			b, k = parse_s3_url(image_url)
+			image_url, _ = get_file_url_with_expiry(b, k)
+	except Exception:
+		pass
 	result = fal_client.subscribe(
 		settings.fal_endpoint,
 		arguments={
@@ -54,6 +62,14 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 	if settings.fal_webhook_token:
 		webhook_url += f"&token={settings.fal_webhook_token}"
 
+	# Убедимся, что image_url публичный (presigned), если пришёл как s3://
+	try:
+		if image_url.startswith("s3://"):
+			b, k = parse_s3_url(image_url)
+			image_url, _ = get_file_url_with_expiry(b, k)
+	except Exception:
+		pass
+
 	# HTTP Queue API (без использования fal_client.queue)
 	queue_url = f"https://queue.fal.run/{settings.fal_endpoint}"
 	headers = {
@@ -62,8 +78,6 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 	}
 	payload = {
 		"prompt": prompt,
-		"imageUrl": image_url,
-		"webhookUrl": webhook_url,
 		"imageUrl": image_url,
 		"webhookUrl": webhook_url,
 	}

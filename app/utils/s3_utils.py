@@ -40,6 +40,25 @@ def presigned_get_url(bucket: str, key: str, expires: Optional[int] = None) -> s
 	)
 
 
+def get_file_url(bucket: str, key: str, expires: Optional[int] = None) -> str:
+	"""Возвращает публичную presigned-ссылку на объект."""
+	return presigned_get_url(bucket, key, expires)
+
+
+def get_file_url_with_expiry(bucket: str, key: str, expires: Optional[int] = None) -> tuple[str, int]:
+	"""Возвращает (url, expires_in секунд)."""
+	exp = expires or settings.s3_presign_ttl_seconds
+	return presigned_get_url(bucket, key, exp), exp
+
+
+def get_files_url(bucket: str, object_names: list[str], expires: Optional[int] = None) -> list[str]:
+	"""Возвращает список публичных presigned-ссылок для нескольких ключей."""
+	urls: list[str] = []
+	for name in object_names:
+		urls.append(get_file_url(bucket, name, expires))
+	return urls
+
+
 def parse_s3_url(url: str) -> tuple[str, str]:
 	"""Парсит строки вида s3://bucket/key -> (bucket, key)."""
 	if not url.startswith("s3://"):

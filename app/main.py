@@ -15,7 +15,7 @@ from app.services.email_service import send_email_with_attachments
 from app.services.fal_service import generate_from_url, submit_generation
 
 # new imports
-from app.utils.s3_utils import upload_bytes, s3_key_for_upload
+from app.utils.s3_utils import upload_bytes, s3_key_for_upload, get_file_url_with_expiry
 import os
 import json
 
@@ -77,8 +77,15 @@ async def create_order(
 		key = s3_key_for_upload(anonUserId, request_id, filename)
 		upload_bytes(settings.s3_bucket_name or "", key, content, content_type=upload.content_type)
 		s3_url = f"s3://{settings.s3_bucket_name}/{key}"
+		public_url, exp = get_file_url_with_expiry(settings.s3_bucket_name or "", key)
 		prompt_val = (prompts_list[idx] if prompts_list and idx < len(prompts_list) else "Animate this image")
-		images_meta.append({"s3_url": s3_url, "prompt": prompt_val})
+		images_meta.append({
+			"s3_url": s3_url,
+			"prompt": prompt_val,
+			"image_url": s3_url,
+			"public_image_url": public_url,
+			"expires_in": exp,
+		})
 
 	# 2) записываем заказ в JSON-хранилище
 	order_record = {
@@ -94,7 +101,15 @@ async def create_order(
 		"generation": {
 			"status": "waiting_payment",
 			"items": [
-				{"input_s3_url": im["s3_url"], "prompt": im["prompt"], "status": "pending"}
+				{
+					"image_url": im.get("image_url"),
+					"public_image_url": im.get("public_image_url"),
+					"expires_in": im.get("expires_in"),
+					"prompt": im["prompt"],
+					"status": "pending",
+					# сохраняем старое поле для обратной совместимости
+					"input_s3_url": im["s3_url"],
+				}
 				for im in images_meta
 			],
 		},
@@ -216,13 +231,18 @@ async def yookassa_webhook(payload: dict, request: Request):
 			return {"ok": True}
 		# генерация по каждому инпуту: ставим задачи с вебхуком fal.ai
 		items = gen.get("items") or []
-		from app.utils.s3_utils import parse_s3_url, presigned_get_url
+		from app.utils.s3_utils import parse_s3_url, get_file_url_with_expiry
 		for idx, it in enumerate(items):
 			if it.get("request_id") or it.get("status") in ("running", "succeeded"):
 				continue
 			try:
-				bucket, key = parse_s3_url(it.get("input_s3_url", ""))
-				img_url = presigned_get_url(bucket, key)
+				# Предпочитаем заранее сохранённую публичную ссылку
+				img_url = it.get("public_image_url")
+				if not img_url:
+					bucket, key = parse_s3_url(it.get("input_s3_url", ""))
+					img_url, exp = get_file_url_with_expiry(bucket, key)
+					it["public_image_url"] = img_url
+					it["expires_in"] = exp
 				sub = submit_generation(img_url, it.get("prompt") or "Animate this image", order_id, idx, order.get("anonUserId"))
 				it["status"] = "running"
 				it["request_id"] = sub.get("request_id")
@@ -265,11 +285,17 @@ async def fal_webhook(request: Request):
 			video_resp = _rq.get(video_url, timeout=180)
 			video_resp.raise_for_status()
 			video_bytes = video_resp.content
-			from app.utils.s3_utils import s3_key_for_video, upload_bytes, presigned_get_url as _pres
+			from app.utils.s3_utils import s3_key_for_video, upload_bytes, get_file_url_with_expiry as _gfue, parse_s3_url as _parse
 			video_key = s3_key_for_video(order.get("anonUserId") or "user", order_id, item_index, ".mp4")
 			upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
 			item["status"] = "succeeded"
 			item["result_s3_url"] = f"s3://{settings.s3_bucket_name}/{video_key}"
+			# Сохраняем публичную ссылку и TTL
+			pub_url, exp = _gfue(settings.s3_bucket_name or "", video_key)
+			item["public_video_url"] = pub_url
+			item["expires_in"] = exp
+			# Дублируем поле s3 для симметрии с изображениями
+			item["video_url"] = item["result_s3_url"]
 		except Exception as _e:
 			item["status"] = "failed"
 			item["error"] = str(_e)
@@ -282,13 +308,18 @@ async def fal_webhook(request: Request):
 	all_done = all(it.get("status") in ("succeeded", "failed") for it in items)
 	if all_done:
 		order["generation"]["status"] = "completed"
-		# Собираем ссылки (presigned) и шлём письмо
+		# Собираем публичные ссылки и шлём письмо
 		try:
-			from app.utils.s3_utils import parse_s3_url as _parse, presigned_get_url as _pres
+			from app.utils.s3_utils import parse_s3_url as _parse, get_file_url_with_expiry as _gfue
 			for it in items:
-				if it.get("result_s3_url"):
+				if it.get("public_video_url"):
+					links.append(it["public_video_url"])
+				elif it.get("result_s3_url"):
 					b, k = _parse(it["result_s3_url"])
-					links.append(_pres(b, k))
+					url, exp = _gfue(b, k)
+					it["public_video_url"] = url
+					it["expires_in"] = exp
+					links.append(url)
 			if order.get("email") and links:
 				send_email_with_links(order["email"], links)
 		except Exception:
