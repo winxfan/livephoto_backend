@@ -87,14 +87,17 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 	request_id = data.get("request_id") or data.get("id") or data.get("requestId")
 	if not request_id:
 		raise ValueError("fal.ai queue: request_id not found in response")
-	return {"request_id": request_id}
-
-
-def get_request_status(request_id: str, logs: bool = False) -> Dict[str, Any]:
-	"""Получить статус задачи очереди fal.ai."""
-	# Для статуса и ответа нельзя включать subpath — только базовый model_id (namespace/model)
+	# Сохраним base model id (namespace/model) для последующих запросов
 	parts = (settings.fal_endpoint or "").split("/")
 	base_model = "/".join(parts[:2]) if len(parts) >= 2 else settings.fal_endpoint
+	return {"request_id": request_id, "model_id": base_model}
+
+
+def get_request_status(request_id: str, logs: bool = False, model_id: str | None = None) -> Dict[str, Any]:
+	"""Получить статус задачи очереди fal.ai."""
+	# Для статуса и ответа нельзя включать subpath — только базовый model_id (namespace/model)
+	parts = (model_id or settings.fal_endpoint or "").split("/")
+	base_model = "/".join(parts[:2]) if len(parts) >= 2 else (model_id or settings.fal_endpoint)
 	status_url = f"https://queue.fal.run/{base_model}/requests/{request_id}/status"
 	params = {"logs": 1} if logs else None
 	headers = {"Authorization": f"Key {settings.fal_key}"}
@@ -103,10 +106,10 @@ def get_request_status(request_id: str, logs: bool = False) -> Dict[str, Any]:
 	return resp.json()
 
 
-def get_request_response(request_id: str) -> Dict[str, Any]:
+def get_request_response(request_id: str, model_id: str | None = None) -> Dict[str, Any]:
 	"""Получить результат задачи очереди fal.ai."""
-	parts = (settings.fal_endpoint or "").split("/")
-	base_model = "/".join(parts[:2]) if len(parts) >= 2 else settings.fal_endpoint
+	parts = (model_id or settings.fal_endpoint or "").split("/")
+	base_model = "/".join(parts[:2]) if len(parts) >= 2 else (model_id or settings.fal_endpoint)
 	resp_url = f"https://queue.fal.run/{base_model}/requests/{request_id}"
 	headers = {"Authorization": f"Key {settings.fal_key}"}
 	resp = requests.get(resp_url, headers=headers, timeout=60)

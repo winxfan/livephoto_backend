@@ -257,6 +257,8 @@ async def yookassa_webhook(payload: dict, request: Request):
                 sub = submit_generation(img_url, it.get("prompt") or "Animate this image", order_id, idx, order.get("anonUserId"))
                 it["status"] = "running"
                 it["request_id"] = sub.get("request_id")
+                if sub.get("model_id"):
+                    it["model_id"] = sub["model_id"]
             except Exception as _e:
                 it["status"] = "failed"
                 it["error"] = str(_e)
@@ -363,12 +365,12 @@ def _poll_worker():
 
                     from app.services.fal_service import get_request_status, get_request_response
                     try:
-                        st = get_request_status(req_id, logs=False)
+                        st = get_request_status(req_id, logs=False, model_id=it.get("model_id"))
                         st_status = (st.get("status") or "").upper()
                         logger.info(f"poll: order={order_id} item={idx} req={req_id} status={st_status}")
 
                         if st_status == "COMPLETED":
-                            resp = get_request_response(req_id)
+                            resp = get_request_response(req_id, model_id=it.get("model_id"))
                             media_url = None
                             try:
                                 r = resp or {}
@@ -516,11 +518,11 @@ def _poll_worker():
                         continue
                     from app.services.fal_service import get_request_status, get_request_response
                     try:
-                        st = get_request_status(req_id, logs=False)
+                        st = get_request_status(req_id, logs=False, model_id=it.get("model_id"))
                         st_status = (st.get("status") or "").upper()
                         logger.info(f"poll: order={order_id} item={idx} req={req_id} status={st_status}")
                         if st_status == "COMPLETED":
-                            resp = get_request_response(req_id)
+                            resp = get_request_response(req_id, model_id=it.get("model_id"))
                             response_url = (
                                 resp.get("response_url")
                                 or st.get("response_url")
