@@ -39,6 +39,12 @@ class Settings(BaseSettings):
 	# Frontend
 	frontend_return_url_base: str = Field("https://xn--e1aybc.xn--b1ahgb0aea5aq.online", alias="FRONTEND_RETURN_URL_BASE")
 
+	# Public API base (для внешних вебхуков fal.ai)
+	public_api_base_url: str = Field("https://xn--80aqu.xn--b1ahgb0aea5aq.online", alias="PUBLIC_API_BASE_URL")
+
+	# Секрет подписи вебхука fal.ai (опционально)
+	fal_webhook_token: str | None = Field(None, alias="FAL_WEBHOOK_TOKEN")
+
 	# YooKassa
 	yookassa_shop_id: str | None = Field(None, alias="YOOKASSA_SHOP_ID")
 	yookassa_api_key: str | None = Field(None, alias="YOOKASSA_API_KEY")

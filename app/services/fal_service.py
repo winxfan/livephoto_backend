@@ -42,3 +42,23 @@ def generate_from_url(image_url: str, prompt: str, sync_mode: bool = True) -> Di
 		with_logs=True,
 	)
 	return result
+
+
+def submit_generation(image_url: str, prompt: str, order_id: str, item_index: int, anon_user_id: str | None = None) -> Dict[str, Any]:
+	"""Поставить задачу в очередь fal.ai с вебхуком и вернуть request_id.
+
+	Идемпотентность обеспечиваем на уровне нашего заказа (не запускаем повторно, если есть request_id).
+	"""
+	webhook_url = f"{settings.public_api_base_url}/fal/webhook?order_id={order_id}&item_index={item_index}"
+	if settings.fal_webhook_token:
+		webhook_url += f"&token={settings.fal_webhook_token}"
+	result = fal_client.queue.submit(
+		settings.fal_endpoint,
+		arguments={
+			"prompt": prompt,
+			"image_url": image_url,
+		},
+		webhook_url=webhook_url,
+	)
+	# result содержит request_id
+	return {"request_id": getattr(result, "request_id", None) or result.get("request_id")}

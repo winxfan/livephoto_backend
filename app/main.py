@@ -12,7 +12,7 @@ from app.config import settings
 from app.services.email_service import send_email_with_links
 from app.services.email_service import send_payment_receipt
 from app.services.email_service import send_email_with_attachments
-from app.services.fal_service import generate_from_url
+from app.services.fal_service import generate_from_url, submit_generation
 
 # new imports
 from app.utils.s3_utils import upload_bytes, s3_key_for_upload
@@ -210,42 +210,90 @@ async def yookassa_webhook(payload: dict, request: Request):
 				send_payment_receipt(order["email"], float(amount or 0), order_id, payment_id)
 		except Exception:
 			pass
-		# генерация по каждому инпуту: используем presigned URL к S3 как image_url
-		items = (order.get("generation") or {}).get("items") or []
-		links: List[str] = []
+		# Идемпотентность: если генерация уже шла/завершилась — ничего не делаем
+		gen = order.get("generation") or {}
+		if gen.get("status") in ("in_progress", "completed"):
+			return {"ok": True}
+		# генерация по каждому инпуту: ставим задачи с вебхуком fal.ai
+		items = gen.get("items") or []
 		from app.utils.s3_utils import parse_s3_url, presigned_get_url
 		for idx, it in enumerate(items):
+			if it.get("request_id") or it.get("status") in ("running", "succeeded"):
+				continue
 			try:
 				bucket, key = parse_s3_url(it.get("input_s3_url", ""))
 				img_url = presigned_get_url(bucket, key)
-				# Генерируем по URL, чтобы не читать локальные файлы
-				res = generate_from_url(img_url, prompt=it.get("prompt") or "Animate this image", sync_mode=True)
-				url = res.get("response_url") or res.get("url") or res.get("video_url")
-				if url:
-					# Заливаем видео в S3/videos и формируем presigned ссылку
-					try:
-						import requests as _rq
-						video_resp = _rq.get(url, timeout=120)
-						video_resp.raise_for_status()
-						video_bytes = video_resp.content
-						from app.utils.s3_utils import s3_key_for_video, upload_bytes, presigned_get_url as _pres
-						video_key = s3_key_for_video(order.get("anonUserId") or "user", order_id, idx, ".mp4")
-						upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
-						links.append(_pres(settings.s3_bucket_name or "", video_key))
-					except Exception:
-						# fallback: оставить оригинальную ссылку fal.ai
-						links.append(url)
-			except Exception:
-				continue
-		# отправка ссылок на видео
+				sub = submit_generation(img_url, it.get("prompt") or "Animate this image", order_id, idx, order.get("anonUserId"))
+				it["status"] = "running"
+				it["request_id"] = sub.get("request_id")
+			except Exception as _e:
+				it["status"] = "failed"
+				it["error"] = str(_e)
+		order.setdefault("generation", {})["status"] = "in_progress"
+		order["generation"]["items"] = items
+		orders.save(order)
+	return {"ok": True}
+
+
+@app.post("/fal/webhook")
+async def fal_webhook(request: Request):
+	# Валидация подписи (если используется)
+	params = dict(request.query_params)
+	order_id = params.get("order_id")
+	item_index_str = params.get("item_index")
+	token = params.get("token")
+	if settings.fal_webhook_token and token != settings.fal_webhook_token:
+		return Response(status_code=401)
+	if not order_id or item_index_str is None:
+		return Response(status_code=400)
+	item_index = int(item_index_str)
+	payload = await request.json()
+	status = payload.get("status") or payload.get("state")
+	# В payload должна быть ссылка на видео, структура зависит от модели
+	video_url = payload.get("response_url") or payload.get("url") or payload.get("video_url")
+
+	order = orders.load(order_id) or {}
+	items = (order.get("generation") or {}).get("items") or []
+	if item_index < 0 or item_index >= len(items):
+		return {"ok": True}
+	item = items[item_index]
+	links: List[str] = []
+	if status in ("succeeded", "COMPLETED", "completed") and video_url:
+		# Скачиваем и перекладываем в S3/videos, сохраняем ссылку
 		try:
+			import requests as _rq
+			video_resp = _rq.get(video_url, timeout=180)
+			video_resp.raise_for_status()
+			video_bytes = video_resp.content
+			from app.utils.s3_utils import s3_key_for_video, upload_bytes, presigned_get_url as _pres
+			video_key = s3_key_for_video(order.get("anonUserId") or "user", order_id, item_index, ".mp4")
+			upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
+			item["status"] = "succeeded"
+			item["result_s3_url"] = f"s3://{settings.s3_bucket_name}/{video_key}"
+		except Exception as _e:
+			item["status"] = "failed"
+			item["error"] = str(_e)
+	else:
+		item["status"] = "failed"
+		item["error"] = payload.get("error") or "unknown"
+	# Сохраняем прогресс
+	order.setdefault("generation", {})["items"] = items
+	# Если все items завершены успешно/неуспешно — отправим письма и финальный статус
+	all_done = all(it.get("status") in ("succeeded", "failed") for it in items)
+	if all_done:
+		order["generation"]["status"] = "completed"
+		# Собираем ссылки (presigned) и шлём письмо
+		try:
+			from app.utils.s3_utils import parse_s3_url as _parse, presigned_get_url as _pres
+			for it in items:
+				if it.get("result_s3_url"):
+					b, k = _parse(it["result_s3_url"])
+					links.append(_pres(b, k))
 			if order.get("email") and links:
 				send_email_with_links(order["email"], links)
 		except Exception:
 			pass
-		# финальный статус
-		order.setdefault("generation", {}).update({"status": "completed"})
-		orders.save(order)
+	orders.save(order)
 	return {"ok": True}
 
 
