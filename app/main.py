@@ -376,10 +376,34 @@ def _poll_worker():
                             )
 
                             if response_url:
-                                it["status"] = "succeeded"
-                                it["fal_response_url"] = response_url
-                                logger.info(f"poll: COMPLETED saved response_url for order={order_id} item={idx}")
-                                changed = True
+                                # Скачиваем видео и перекладываем в наш S3
+                                try:
+                                    import requests as _rq
+                                    from app.utils.s3_utils import (
+                                        s3_key_for_video as _s3_key_for_video,
+                                        upload_bytes as _upload_bytes,
+                                        get_file_url_with_expiry as _gfue,
+                                    )
+                                    vresp = _rq.get(response_url, timeout=180)
+                                    vresp.raise_for_status()
+                                    video_bytes = vresp.content
+                                    video_key = _s3_key_for_video(order.get("anonUserId") or "user", order_id, idx, ".mp4")
+                                    _upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
+                                    # Обновляем item ссылками S3
+                                    it["status"] = "succeeded"
+                                    it["result_s3_url"] = f"s3://{settings.s3_bucket_name}/{video_key}"
+                                    pub_url, exp = _gfue(settings.s3_bucket_name or "", video_key)
+                                    it["public_video_url"] = pub_url
+                                    it["expires_in"] = exp
+                                    it["video_url"] = it["result_s3_url"]
+                                    it["fal_response_url"] = response_url
+                                    logger.info(f"poll: COMPLETED downloaded and saved to S3 for order={order_id} item={idx}")
+                                    changed = True
+                                except Exception as _e:
+                                    it["status"] = "failed"
+                                    it["error"] = str(_e)
+                                    logger.exception(f"poll: error saving video to S3 order={order_id} item={idx}")
+                                    changed = True
                             else:
                                 it["status"] = "failed"
                                 it["error"] = "no response_url"
@@ -519,13 +543,19 @@ async def get_results(request_id: str):
     links: List[str] = []
     changed = False
     try:
-        from app.utils.s3_utils import parse_s3_url as _parse, get_file_url_with_expiry as _gfue
-        for it in items:
+        from app.utils.s3_utils import (
+            parse_s3_url as _parse,
+            get_file_url_with_expiry as _gfue,
+            s3_key_for_video as _s3_key_for_video,
+            upload_bytes as _upload_bytes,
+        )
+        import requests as _rq
+        for idx, it in enumerate(items):
             # приоритетно уже сохранённые публичные ссылки
             if it.get("public_video_url"):
                 links.append(it["public_video_url"])
                 continue
-            # если есть S3-ключ — сформируем публичную ссылку
+            # если есть наш S3 — формируем presigned
             s3u = it.get("result_s3_url") or it.get("video_url")
             if s3u and isinstance(s3u, str) and s3u.startswith("s3://"):
                 try:
@@ -535,11 +565,27 @@ async def get_results(request_id: str):
                     it["expires_in"] = exp
                     links.append(url)
                     changed = True
+                    continue
                 except Exception:
                     pass
-            # в крайнем случае — отдадим оригинальную ссылку модели (может быть не из s3)
-            elif it.get("fal_response_url"):
-                links.append(it["fal_response_url"])
+            # иначе, если есть fal_response_url — скачать и переложить в наш S3
+            fal_url = it.get("fal_response_url")
+            if fal_url:
+                try:
+                    vresp = _rq.get(fal_url, timeout=180)
+                    vresp.raise_for_status()
+                    video_bytes = vresp.content
+                    video_key = _s3_key_for_video(order.get("anonUserId") or "user", request_id, idx, ".mp4")
+                    _upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
+                    it["result_s3_url"] = f"s3://{settings.s3_bucket_name}/{video_key}"
+                    url, exp = _gfue(settings.s3_bucket_name or "", video_key)
+                    it["public_video_url"] = url
+                    it["expires_in"] = exp
+                    it["video_url"] = it["result_s3_url"]
+                    links.append(url)
+                    changed = True
+                except Exception:
+                    pass
     except Exception:
         pass
     if changed:
