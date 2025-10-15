@@ -88,10 +88,6 @@ def send_email_with_links(recipient_email: str, links: List[Any], request_id: Op
 	text_body = "\n".join(text_body_lines)
 
 	# HTML-версия письма
-	html_links = "".join(
-		f'<li style="margin-bottom:6px;"><a href="{l}" style="color:#2563eb; text-decoration:underline;" target="_blank" rel="noopener">{l}</a></li>'
-		for l in public_links
-	)
 	html_cta = (
 		f'<a href="{cta_url}" target="_blank" rel="noopener" '
 		f'style="display:inline-block; background:#2563eb; color:#ffffff; text-decoration:none; '
@@ -112,8 +108,6 @@ def send_email_with_links(recipient_email: str, links: List[Any], request_id: Op
 					<p style=\"margin:0 0 12px 0;\">Мы с радостью сообщаем — ваше фото ожило и превратилось в настоящее видео! Магия технологий и немного тепла сделали прошлое чуть ближе — теперь вы можете снова увидеть улыбки, взгляды и моменты, дорогие вашему сердцу.</p>
 					<p style=\"margin:0 0 16px 0;\">👉 Нажмите на кнопку ниже, чтобы посмотреть и скачать ожившее видео:</p>
 					<div style=\"text-align:center; margin:18px 0 6px 0;\">{html_cta}</div>
-					<p style=\"margin:14px 0 0 0; color:#475569; font-size:13px;\">Если кнопка не работает, используйте ссылки ниже:</p>
-					<ul style=\"margin:8px 0 0 18px; padding:0;\">{html_links}</ul>
 					<p style=\"margin:18px 0 6px 0;\">Пусть это маленькое чудо подарит вам немного ностальгии и вдохновения 🌿</p>
 					<p style=\"margin:0 0 24px 0;\">С любовью,<br/>Команда ОживиФото.online</p>
 				</td>
