@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 	s3_region_name: str | None = Field(None, alias="S3_REGION_NAME")
 	s3_presign_ttl_seconds: int = Field(259200, alias="S3_PRESIGN_TTL_SECONDS")
 	uploads_prefix: str = Field("uploads/", alias="UPLOADS_PREFIX")
-	videos_prefix: str = Field("videos/", alias="VIDEOS_PREFIX")
+	videos_prefix: str = Field("video/", alias="VIDEOS_PREFIX")
 
 	# Frontend
 	frontend_return_url_base: str = Field("https://xn--e1aybc.xn--b1ahgb0aea5aq.online", alias="FRONTEND_RETURN_URL_BASE")
