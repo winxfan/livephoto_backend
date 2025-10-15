@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 	videos_prefix: str = Field("video/", alias="VIDEOS_PREFIX")
 
 	# Frontend
-	frontend_return_url_base: str = Field("https://xn--e1aybc.xn--b1ahgb0aea5aq.online", alias="FRONTEND_RETURN_URL_BASE")
+	frontend_return_url_base: str = Field("https://xn--b1ahgb0aea5aq.online/", alias="FRONTEND_RETURN_URL_BASE")
 
 	# Public API base (для внешних вебхуков fal.ai)
 	public_api_base_url: str = Field("https://xn--80aqu.xn--b1ahgb0aea5aq.online", alias="PUBLIC_API_BASE_URL")
