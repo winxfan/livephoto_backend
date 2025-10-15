@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 import os
 import fal_client
+import requests
 
 from app.config import settings
 
@@ -52,13 +53,23 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 	webhook_url = f"{settings.public_api_base_url}/fal/webhook?order_id={order_id}&item_index={item_index}"
 	if settings.fal_webhook_token:
 		webhook_url += f"&token={settings.fal_webhook_token}"
-	result = fal_client.queue.submit(
-		settings.fal_endpoint,
-		arguments={
-			"prompt": prompt,
-			"image_url": image_url,
-		},
-		webhook_url=webhook_url,
-	)
-	# result содержит request_id
-	return {"request_id": getattr(result, "request_id", None) or result.get("request_id")}
+
+	# HTTP Queue API (без использования fal_client.queue)
+	queue_url = f"https://queue.fal.run/{settings.fal_endpoint}"
+	headers = {
+		"Authorization": f"Key {settings.fal_key}",
+		"Content-Type": "application/json",
+	}
+	payload = {
+		# Некоторые модели ожидают 'input', другие 'arguments' — передадим оба
+		"input": {"prompt": prompt, "image_url": image_url},
+		"arguments": {"prompt": prompt, "image_url": image_url},
+		"webhook_url": webhook_url,
+	}
+	resp = requests.post(queue_url, json=payload, headers=headers, timeout=30)
+	resp.raise_for_status()
+	data = resp.json()
+	request_id = data.get("request_id") or data.get("id") or data.get("requestId")
+	if not request_id:
+		raise ValueError("fal.ai queue: request_id not found in response")
+	return {"request_id": request_id}
