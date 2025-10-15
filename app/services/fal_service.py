@@ -88,3 +88,22 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 	if not request_id:
 		raise ValueError("fal.ai queue: request_id not found in response")
 	return {"request_id": request_id}
+
+
+def get_request_status(request_id: str, logs: bool = False) -> Dict[str, Any]:
+	"""Получить статус задачи очереди fal.ai."""
+	status_url = f"https://queue.fal.run/{settings.fal_endpoint}/requests/{request_id}/status"
+	params = {"logs": 1} if logs else None
+	headers = {"Authorization": f"Key {settings.fal_key}"}
+	resp = requests.get(status_url, headers=headers, params=params, timeout=30)
+	resp.raise_for_status()
+	return resp.json()
+
+
+def get_request_response(request_id: str) -> Dict[str, Any]:
+	"""Получить результат задачи очереди fal.ai."""
+	resp_url = f"https://queue.fal.run/{settings.fal_endpoint}/requests/{request_id}"
+	headers = {"Authorization": f"Key {settings.fal_key}"}
+	resp = requests.get(resp_url, headers=headers, timeout=60)
+	resp.raise_for_status()
+	return resp.json()

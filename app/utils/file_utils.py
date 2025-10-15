@@ -125,3 +125,11 @@ class JsonOrderStore:
 				self._write_day(path, items)
 				return
 
+	def list_recent_orders(self, max_files: int = 7) -> List[dict]:
+		"""Возвращает список заявок из последних max_files дневных файлов (от новых к старым)."""
+		result: List[dict] = []
+		files = self._list_day_files()[::-1][:max_files]
+		for path in files:
+			result.extend(self._read_day(path))
+		return result
+

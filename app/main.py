@@ -31,6 +31,7 @@ app.add_middleware(
 )
 
 orders = JsonOrderStore()
+import threading, time
 
 @app.post("/generate_video")
 async def generate_video(
@@ -326,6 +327,70 @@ async def fal_webhook(request: Request):
 			pass
 	orders.save(order)
 	return {"ok": True}
+
+
+# Периодическая задача: опрос статусов очереди и сохранение response_url
+def _poll_worker():
+    while True:
+        try:
+            all_orders = orders.list_recent_orders(max_files=7)
+            for order in all_orders:
+                gen = order.get("generation") or {}
+                items = gen.get("items") or []
+                order_id = order.get("order_id") or order.get("request_id")
+                changed = False
+                for idx, it in enumerate(items):
+                    if it.get("status") in ("succeeded", "failed"):
+                        continue
+                    req_id = it.get("request_id")
+                    if not req_id:
+                        continue
+                    from app.services.fal_service import get_request_status, get_request_response
+                    try:
+                        st = get_request_status(req_id, logs=False)
+                        st_status = (st.get("status") or "").upper()
+                        if st_status == "COMPLETED":
+                            resp = get_request_response(req_id)
+                            response_url = (
+                                resp.get("response_url")
+                                or st.get("response_url")
+                                or resp.get("response", {}).get("response_url")
+                            )
+                            if response_url:
+                                it["status"] = "succeeded"
+                                it["fal_response_url"] = response_url
+                                changed = True
+                            else:
+                                it["status"] = "failed"
+                                it["error"] = "no response_url"
+                                changed = True
+                    except Exception as _e:
+                        it["status"] = "failed"
+                        it["error"] = str(_e)
+                        changed = True
+                if changed:
+                    order.setdefault("generation", {})["items"] = items
+                    all_done = all(x.get("status") in ("succeeded", "failed") for x in items)
+                    if all_done:
+                        order["generation"]["status"] = "completed"
+                        try:
+                            lnks: List[str] = []
+                            for x in items:
+                                if x.get("fal_response_url"):
+                                    lnks.append(x["fal_response_url"])
+                            if order.get("email") and lnks:
+                                send_email_with_links(order["email"], lnks)
+                        except Exception:
+                            pass
+                    orders.save(order)
+        except Exception:
+            pass
+        time.sleep(20)
+
+@app.on_event("startup")
+def start_poll_thread() -> None:
+    t = threading.Thread(target=_poll_worker, name="fal-poll", daemon=True)
+    t.start()
 
 
 # статус запроса
