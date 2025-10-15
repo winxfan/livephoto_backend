@@ -107,8 +107,8 @@ async def create_order(
 					"expires_in": im.get("expires_in"),
 					"prompt": im["prompt"],
 					"status": "pending",
-					# сохраняем старое поле для обратной совместимости
-					"input_s3_url": im["s3_url"],
+					# по требованию: в input_s3_url кладём публичный URL
+					"input_s3_url": im.get("public_image_url"),
 				}
 				for im in images_meta
 			],
