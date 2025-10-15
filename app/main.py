@@ -370,79 +370,24 @@ def _poll_worker():
                         logger.info(f"poll: order={order_id} item={idx} req={req_id} status={st_status}")
 
                         if st_status == "COMPLETED":
+                            from app.services.fal_service import extract_media_url
                             resp = get_request_response(req_id, model_id=it.get("model_id"))
-                            media_url = None
-                            try:
-                                r = resp or {}
-                                r_resp = r.get("response") or {}
-                                # Популярные варианты полей с URL видео
-                                candidates = [
-                                    r.get("video_url"),
-                                    r_resp.get("video_url"),
-                                    r.get("response_url"),
-                                    r_resp.get("response_url"),
-                                    r.get("url"),
-                                    r_resp.get("url"),
-                                ]
-                                for c in candidates:
-                                    if isinstance(c, str) and c:
-                                        media_url = c
-                                        break
-                                # Списки возможных выходов
-                                if not media_url:
-                                    for key in ("videos", "outputs", "result", "media", "files"):
-                                        arr = r.get(key) or r_resp.get(key)
-                                        if isinstance(arr, list) and arr:
-                                            first = arr[0]
-                                            if isinstance(first, dict):
-                                                mu = first.get("url") or first.get("video_url")
-                                                if isinstance(mu, str) and mu:
-                                                    media_url = mu
-                                                    break
-                                            elif isinstance(first, str):
-                                                media_url = first
-                                                break
-                                # Если всё ещё queue.fal.run — сделать авторизованный запрос за фактическим URL
-                                if (not media_url) and isinstance(st.get("response_url"), str) and st.get("response_url").startswith("https://queue.fal.run/"):
-                                    import requests as _rq
-                                    h = {"Authorization": f"Key {settings.fal_key}"}
-                                    qresp = _rq.get(st.get("response_url"), headers=h, timeout=60)
-                                    qresp.raise_for_status()
-                                    qjson = qresp.json()
-                                    qj = qjson or {}
-                                    qjr = qj.get("response") or {}
-                                    for c in [qj.get("video_url"), qjr.get("video_url"), qj.get("url"), qjr.get("url"), qj.get("response_url"), qjr.get("response_url")]:
-                                        if isinstance(c, str) and c:
-                                            media_url = c
-                                            break
-                                    if not media_url:
-                                        for key in ("videos", "outputs", "result", "media", "files"):
-                                            arr = qj.get(key) or qjr.get(key)
-                                            if isinstance(arr, list) and arr:
-                                                first = arr[0]
-                                                if isinstance(first, dict):
-                                                    mu = first.get("url") or first.get("video_url")
-                                                    if isinstance(mu, str) and mu:
-                                                        media_url = mu
-                                                        break
-                                                elif isinstance(first, str):
-                                                    media_url = first
-                                                    break
-                            except Exception:
-                                media_url = None
+                            media_url = extract_media_url(resp)
+                            if (not media_url) and isinstance(st.get("response_url"), str) and st.get("response_url").startswith("https://queue.fal.run/"):
+                                from app.services.fal_service import fetch_queue_json
+                                qjson = fetch_queue_json(st.get("response_url"))
+                                media_url = extract_media_url(qjson or {})
 
                             if media_url:
                                 # Скачиваем видео и перекладываем в наш S3
                                 try:
-                                    import requests as _rq
                                     from app.utils.s3_utils import (
                                         s3_key_for_video as _s3_key_for_video,
                                         upload_bytes as _upload_bytes,
                                         get_file_url_with_expiry as _gfue,
                                     )
-                                    vresp = _rq.get(media_url, timeout=180)
-                                    vresp.raise_for_status()
-                                    video_bytes = vresp.content
+                                    from app.services.fal_service import fetch_bytes
+                                    video_bytes = fetch_bytes(media_url, timeout=180)
                                     video_key = _s3_key_for_video(order.get("anonUserId") or "user", order_id, idx, ".mp4")
                                     _upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
                                     # Обновляем item ссылками S3
@@ -605,7 +550,7 @@ async def get_results(request_id: str):
             s3_key_for_video as _s3_key_for_video,
             upload_bytes as _upload_bytes,
         )
-        import requests as _rq
+        from app.services.fal_service import extract_media_url, fetch_queue_json, fetch_bytes
         for idx, it in enumerate(items):
             # приоритетно уже сохранённые публичные ссылки
             if it.get("public_video_url"):
@@ -628,31 +573,11 @@ async def get_results(request_id: str):
             fal_url = it.get("fal_response_url")
             if fal_url:
                 try:
-                    # Если это queue.fal.run — авторизуемся и достанем фактический media URL
                     media_url = fal_url
                     if isinstance(fal_url, str) and fal_url.startswith("https://queue.fal.run/"):
-                        h = {"Authorization": f"Key {settings.fal_key}"}
-                        qresp = _rq.get(fal_url, headers=h, timeout=60)
-                        qresp.raise_for_status()
-                        qjson = qresp.json() or {}
-                        qjr = qjson.get("response") or {}
-                        for c in [qjson.get("video_url"), qjr.get("video_url"), qjson.get("url"), qjr.get("url"), qjson.get("response_url"), qjr.get("response_url")]:
-                            if isinstance(c, str) and c:
-                                media_url = c
-                                break
-                        if media_url == fal_url:
-                            arr = qjson.get("videos") or qjr.get("videos") or qjson.get("outputs") or qjr.get("outputs")
-                            if isinstance(arr, list) and arr:
-                                first = arr[0]
-                                if isinstance(first, dict):
-                                    mu = first.get("url") or first.get("video_url")
-                                    if isinstance(mu, str) and mu:
-                                        media_url = mu
-                                elif isinstance(first, str):
-                                    media_url = first
-                    vresp = _rq.get(media_url, timeout=180)
-                    vresp.raise_for_status()
-                    video_bytes = vresp.content
+                        qjson = fetch_queue_json(fal_url)
+                        media_url = extract_media_url(qjson or {}) or fal_url
+                    video_bytes = fetch_bytes(media_url, timeout=180)
                     video_key = _s3_key_for_video(order.get("anonUserId") or "user", request_id, idx, ".mp4")
                     _upload_bytes(settings.s3_bucket_name or "", video_key, video_bytes, content_type="video/mp4")
                     it["result_s3_url"] = f"s3://{settings.s3_bucket_name}/{video_key}"
