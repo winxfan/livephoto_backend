@@ -79,6 +79,7 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 	payload = {
 		"prompt": prompt,
 		"imageUrl": image_url,
+		"image_url": image_url,
 		"webhookUrl": webhook_url,
 	}
 	resp = requests.post(queue_url, json=payload, headers=headers, timeout=30)
