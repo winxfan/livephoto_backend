@@ -61,10 +61,11 @@ def submit_generation(image_url: str, prompt: str, order_id: str, item_index: in
 		"Content-Type": "application/json",
 	}
 	payload = {
-		# Некоторые модели ожидают 'input', другие 'arguments' — передадим оба
-		"input": {"prompt": prompt, "image_url": image_url},
-		"arguments": {"prompt": prompt, "image_url": image_url},
-		"webhook_url": webhook_url,
+		"prompt": prompt,
+		"imageUrl": image_url,
+		"webhookUrl": webhook_url,
+		"imageUrl": image_url,
+		"webhookUrl": webhook_url,
 	}
 	resp = requests.post(queue_url, json=payload, headers=headers, timeout=30)
 	resp.raise_for_status()
