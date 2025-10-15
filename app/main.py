@@ -19,6 +19,7 @@ from app.utils.s3_utils import upload_bytes, s3_key_for_upload, get_file_url_wit
 import os
 import json
 import logging
+from logging.handlers import TimedRotatingFileHandler
 
 app = FastAPI()
 
@@ -42,6 +43,44 @@ if not logger.handlers:
     h.setFormatter(formatter)
     logger.addHandler(h)
     logger.setLevel(logging.INFO)
+
+# Файловое логирование: дневные файлы в all_logs/{YYYY-MM-DD}.json
+try:
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    all_logs_dir = os.path.join(base_dir, "all_logs")
+    os.makedirs(all_logs_dir, exist_ok=True)
+
+    file_handler = TimedRotatingFileHandler(
+        os.path.join(all_logs_dir, "app.log"),
+        when="midnight",
+        interval=1,
+        backupCount=30,
+        encoding="utf-8",
+        utc=True,
+    )
+    # Имена файлов вида {YYYY-MM-DD}.json
+    file_handler.suffix = "%Y-%m-%d"
+
+    def _daily_json_namer(default_name: str) -> str:
+        # default_name заканчивается на ".YYYY-MM-DD"
+        dir_name = os.path.dirname(default_name)
+        date_suffix = default_name.rsplit(".", 1)[-1]
+        return os.path.join(dir_name, f"{date_suffix}.json")
+
+    file_handler.namer = _daily_json_namer
+    file_formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    file_handler.setFormatter(file_formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+
+    # Добавим handler к основным логгерам сервера (uvicorn/fastapi), чтобы писать все логи
+    for _name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "livephoto.polling"):
+        logging.getLogger(_name).addHandler(file_handler)
+except Exception:
+    # Не мешаем запуску приложения, если конфигурация логов не удалась
+    pass
 
 @app.post("/generate_video")
 async def generate_video(

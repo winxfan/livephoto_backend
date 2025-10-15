@@ -1,0 +1,22 @@
+2025-10-16 02:24:51,753 INFO [uvicorn.error] Started server process [30486]
+2025-10-16 02:24:51,753 INFO [uvicorn.error] Started server process [30486]
+2025-10-16 02:24:51,753 INFO [uvicorn.error] Waiting for application startup.
+2025-10-16 02:24:51,753 INFO [uvicorn.error] Waiting for application startup.
+2025-10-16 02:24:51,754 INFO [livephoto.polling] poll: tick start
+2025-10-16 02:24:51,754 INFO [livephoto.polling] poll: background thread started
+2025-10-16 02:24:51,754 INFO [livephoto.polling] poll: background thread started
+2025-10-16 02:24:51,754 INFO [livephoto.polling] poll: tick start
+2025-10-16 02:24:51,754 INFO [uvicorn.error] Application startup complete.
+2025-10-16 02:24:51,754 INFO [uvicorn.error] Application startup complete.
+2025-10-16 02:24:51,755 INFO [livephoto.polling] poll: loaded recent orders: 5
+2025-10-16 02:24:51,755 INFO [livephoto.polling] poll: loaded recent orders: 5
+2025-10-16 02:24:51,755 INFO [livephoto.polling] poll: tick end
+2025-10-16 02:24:51,755 INFO [livephoto.polling] poll: tick end
+2025-10-16 02:24:57,419 INFO [uvicorn.error] Shutting down
+2025-10-16 02:24:57,419 INFO [uvicorn.error] Shutting down
+2025-10-16 02:24:57,523 INFO [uvicorn.error] Waiting for application shutdown.
+2025-10-16 02:24:57,523 INFO [uvicorn.error] Waiting for application shutdown.
+2025-10-16 02:24:57,524 INFO [uvicorn.error] Application shutdown complete.
+2025-10-16 02:24:57,524 INFO [uvicorn.error] Application shutdown complete.
+2025-10-16 02:24:57,524 INFO [uvicorn.error] Finished server process [30486]
+2025-10-16 02:24:57,524 INFO [uvicorn.error] Finished server process [30486]
