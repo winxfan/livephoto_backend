@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 	videos_prefix: str = Field("videos/", alias="VIDEOS_PREFIX")
 
 	# Frontend
-	frontend_return_url_base: str = Field("http://localhost:3000", alias="FRONTEND_RETURN_URL_BASE")
+	frontend_return_url_base: str = Field("https://xn--e1aybc.xn--b1ahgb0aea5aq.online", alias="FRONTEND_RETURN_URL_BASE")
 
 	# YooKassa
 	yookassa_shop_id: str | None = Field(None, alias="YOOKASSA_SHOP_ID")
