@@ -18,6 +18,7 @@ from app.services.fal_service import generate_from_url, submit_generation
 from app.utils.s3_utils import upload_bytes, s3_key_for_upload, get_file_url_with_expiry
 import os
 import json
+import logging
 
 app = FastAPI()
 
@@ -32,6 +33,15 @@ app.add_middleware(
 
 orders = JsonOrderStore()
 import threading, time
+
+# Логгер для поллинга
+logger = logging.getLogger("livephoto.polling")
+if not logger.handlers:
+	h = logging.StreamHandler()
+	formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+	h.setFormatter(formatter)
+	logger.addHandler(h)
+	logger.setLevel(logging.INFO)
 
 @app.post("/generate_video")
 async def generate_video(
@@ -333,7 +343,9 @@ async def fal_webhook(request: Request):
 def _poll_worker():
     while True:
         try:
+            logger.info("poll: tick start")
             all_orders = orders.list_recent_orders(max_files=7)
+            logger.info(f"poll: loaded recent orders: {len(all_orders)}")
             for order in all_orders:
                 gen = order.get("generation") or {}
                 items = gen.get("items") or []
@@ -349,6 +361,7 @@ def _poll_worker():
                     try:
                         st = get_request_status(req_id, logs=False)
                         st_status = (st.get("status") or "").upper()
+                        logger.info(f"poll: order={order_id} item={idx} req={req_id} status={st_status}")
                         if st_status == "COMPLETED":
                             resp = get_request_response(req_id)
                             response_url = (
@@ -359,14 +372,17 @@ def _poll_worker():
                             if response_url:
                                 it["status"] = "succeeded"
                                 it["fal_response_url"] = response_url
+                                logger.info(f"poll: COMPLETED saved response_url for order={order_id} item={idx}")
                                 changed = True
                             else:
                                 it["status"] = "failed"
                                 it["error"] = "no response_url"
+                                logger.warning(f"poll: COMPLETED but no response_url order={order_id} item={idx}")
                                 changed = True
                     except Exception as _e:
                         it["status"] = "failed"
                         it["error"] = str(_e)
+                        logger.exception(f"poll: error processing order={order_id} item={idx} req={req_id}")
                         changed = True
                 if changed:
                     order.setdefault("generation", {})["items"] = items
@@ -380,9 +396,11 @@ def _poll_worker():
                                     lnks.append(x["fal_response_url"])
                             if order.get("email") and lnks:
                                 send_email_with_links(order["email"], lnks)
+                                logger.info(f"poll: sent email with {len(lnks)} link(s) to {order['email']}")
                         except Exception:
                             pass
                     orders.save(order)
+            logger.info("poll: tick end")
         except Exception:
             pass
         time.sleep(20)
@@ -391,6 +409,7 @@ def _poll_worker():
 def start_poll_thread() -> None:
     t = threading.Thread(target=_poll_worker, name="fal-poll", daemon=True)
     t.start()
+    logger.info("poll: background thread started")
 
 
 # статус запроса
