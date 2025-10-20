@@ -20,6 +20,8 @@ import os
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
@@ -81,6 +83,42 @@ try:
 except Exception:
     # Не мешаем запуску приложения, если конфигурация логов не удалась
     pass
+
+
+def _is_presigned_expired(url: str | None, expires_in: int | None, created_at_iso: str | None) -> bool:
+    """Возвращает True, если presigned URL, вероятно, истёк.
+
+    Пытаемся сначала использовать сохранённые expires_in + created_at, иначе парсим X-Amz-Date/X-Amz-Expires.
+    """
+    try:
+        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        # Вариант 1: используем сохранённые значения
+        if created_at_iso and expires_in:
+            try:
+                created = datetime.fromisoformat(created_at_iso)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                expires_at = created + timedelta(seconds=int(expires_in))
+                return now >= expires_at
+            except Exception:
+                pass
+
+        # Вариант 2: парсим параметры из самой ссылки
+        if url:
+            parsed = urlparse(url)
+            qs = parse_qs(parsed.query)
+            amz_date_vals = qs.get("X-Amz-Date") or qs.get("x-amz-date")
+            amz_exp_vals = qs.get("X-Amz-Expires") or qs.get("x-amz-expires")
+            if amz_date_vals and amz_exp_vals:
+                amz_date = amz_date_vals[0]
+                amz_exp = int(amz_exp_vals[0])
+                # Формат: YYYYMMDDTHHMMSSZ
+                created = datetime.strptime(amz_date, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+                expires_at = created + timedelta(seconds=amz_exp)
+                return now >= expires_at
+    except Exception:
+        return False
+    return False
 
 @app.post("/generate_video")
 async def generate_video(
@@ -346,6 +384,7 @@ async def fal_webhook(request: Request):
             pub_url, exp = _gfue(settings.s3_bucket_name or "", video_key)
             item["public_video_url"] = pub_url
             item["expires_in"] = exp
+            item["public_url_created_at"] = datetime.utcnow().isoformat()
             # Дублируем поле s3 для симметрии с изображениями
             item["video_url"] = item["result_s3_url"]
         except Exception as _e:
@@ -435,6 +474,7 @@ def _poll_worker():
                                     pub_url, exp = _gfue(settings.s3_bucket_name or "", video_key)
                                     it["public_video_url"] = pub_url
                                     it["expires_in"] = exp
+                                    it["public_url_created_at"] = datetime.utcnow().isoformat()
                                     it["video_url"] = it.get("result_s3_url")
                                     it["fal_response_url"] = media_url
                                     logger.info(f"poll: COMPLETED downloaded and saved to S3 for order={order_id} item={idx}")
@@ -515,6 +555,18 @@ def _poll_worker():
                             if response_url:
                                 it["status"] = "succeeded"
                                 it["fal_response_url"] = response_url
+                            # Если уже лежит в S3, обновим/сформируем публичную ссылку
+                            try:
+                                from app.utils.s3_utils import parse_s3_url as _parse, get_file_url_with_expiry as _gfue
+                                s3u = it.get("result_s3_url") or it.get("video_url")
+                                if isinstance(s3u, str) and s3u.startswith("s3://"):
+                                    b, k = _parse(s3u)
+                                    url, exp = _gfue(b, k)
+                                    it["public_video_url"] = url
+                                    it["expires_in"] = exp
+                                    it["public_url_created_at"] = datetime.utcnow().isoformat()
+                            except Exception:
+                                pass
                                 logger.info(f"poll: COMPLETED saved response_url for order={order_id} item={idx}")
                                 changed = True
                             else:
@@ -593,6 +645,21 @@ async def get_results(request_id: str):
         for idx, it in enumerate(items):
             # приоритетно уже сохранённые публичные ссылки
             if it.get("public_video_url"):
+                # Проверяем, не истёк ли presigned
+                if _is_presigned_expired(
+                    it.get("public_video_url"), it.get("expires_in"), it.get("public_url_created_at")
+                ):
+                    # Перевыпускаем
+                    try:
+                        s3u = it.get("result_s3_url") or it.get("video_url")
+                        if isinstance(s3u, str) and s3u.startswith("s3://"):
+                            b, k = _parse(s3u)
+                            url, exp = _gfue(b, k)
+                            it["public_video_url"] = url
+                            it["expires_in"] = exp
+                            it["public_url_created_at"] = datetime.utcnow().isoformat()
+                    except Exception:
+                        pass
                 links.append(it["public_video_url"])
                 continue
             # если есть наш S3 — формируем presigned
@@ -603,6 +670,7 @@ async def get_results(request_id: str):
                     url, exp = _gfue(b, k)
                     it["public_video_url"] = url
                     it["expires_in"] = exp
+                    it["public_url_created_at"] = datetime.utcnow().isoformat()
                     links.append(url)
                     changed = True
                     continue
@@ -623,6 +691,7 @@ async def get_results(request_id: str):
                     url, exp = _gfue(settings.s3_bucket_name or "", video_key)
                     it["public_video_url"] = url
                     it["expires_in"] = exp
+                    it["public_url_created_at"] = datetime.utcnow().isoformat()
                     it["video_url"] = it["result_s3_url"]
                     links.append(url)
                     changed = True
